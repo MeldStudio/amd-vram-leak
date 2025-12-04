@@ -60,7 +60,8 @@ static void PrintHelp(const char* program_name) {
 
 static void ParseCommandLine(int argc, char* argv[]) {
   for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], "-flush-after-handle-close") == 0) {
+    if (strcmp(argv[i], "-flush-after-handle-close") == 0 ||
+        strcmp(argv[i], "--flush-after-handle-close") == 0) {
       g_config.flush_after_handle_close = true;
     } else if (strcmp(argv[i], "-help") == 0 ||
                strcmp(argv[i], "--help") == 0 ||
