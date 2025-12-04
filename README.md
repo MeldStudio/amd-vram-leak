@@ -34,6 +34,18 @@ void DestroyGpuMemoryBuffer(int id, HANDLE handle) {
 
 ## Running the Reproduction
 
+[A single file prebuilt executable is available here](https://github.com/MeldStudio/amd-vram-leak/releases/latest/download/amd-vram-leak-repro.exe)
+
+```
+Usage: .\amd-vram-leak-repro.exe [options]
+
+Options:
+  -help                          Show this help message and exit
+  -flush-after-handle-close      Flush D3D11 device context after closing texture handles
+```
+
+To build and run from source:
+
 ```powershell
 # Build
 .\with-devenv.ps1 cmake -B out/dev -G Ninja

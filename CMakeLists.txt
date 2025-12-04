@@ -4,6 +4,11 @@ project(amd-vram-leak LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Use static runtime by default (when BUILD_SHARED_LIBS is OFF or undefined)
+if(NOT BUILD_SHARED_LIBS)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Use new timestamp behavior for URL downloads
 cmake_policy(SET CMP0135 NEW)
 
