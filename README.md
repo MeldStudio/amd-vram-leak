@@ -40,10 +40,10 @@ void DestroyGpuMemoryBuffer(int id, HANDLE handle) {
 .\with-devenv.ps1 ninja -C out/dev
 
 # Run WITHOUT fix - observe VRAM climbing continuously
-.\out\dev\texture_repro.exe
+.\out\dev\repro.exe
 
 # Run WITH fix - VRAM stays stable
-.\out\dev\texture_repro.exe -flush-after-handle-close
+.\out\dev\repro.exe -flush-after-handle-close
 ```
 
 ## Observing the Leak
@@ -79,6 +79,8 @@ Tested on:
 - AMD Radeon 890M (integrated)
 - Windows 11
 - Latest AMD drivers
+
+Confirmed to work correctly on NVIDIA GPUs.
 
 ## Command Line Options
 
