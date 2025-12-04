@@ -4,7 +4,7 @@ This repository contains a minimal reproduction of a DXGI shared texture memory 
 
 ## The Issue
 
-When creating `DXGI_FORMAT_R8G8B8A8_UNORM` textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED` flags and sharing them between devices:
+When creating textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED` flags and sharing them between devices:
 
 1. **Factory Device**: Creates textures and returns shared NT handles
 2. **Render Device**: Opens the shared handle, renders to the texture, waits for GPU completion via fence
@@ -65,7 +65,6 @@ With `-flush-after-handle-close`:
 
 - **Texture size**: 3840×2160 RGBA (approx. 31.6 MB each)
 - **Textures per iteration**: 10
-- **Format**: `DXGI_FORMAT_R8G8B8A8_UNORM`
 - **Sharing flags**: `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED`
 - **GPU sync**: `ID3D11Fence` with CPU wait ensures GPU has completed before disposal
 
