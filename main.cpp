@@ -231,8 +231,31 @@ inline HRESULT CHECK_RESULT(
   return hr;
 }
 
-// Get the high performance adapter (first adapter by default)
+// Get the high performance adapter. Prefer DXGI's high performance hint and
+// skip software adapters.
 ComPtr<IDXGIAdapter1> GetHighPerformanceAdapter() {
+  // Try GPU-preference aware enumeration first (DXGI 1.6+)
+  ComPtr<IDXGIFactory6> dxgi_factory6;
+  if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&dxgi_factory6)))) {
+    for (UINT index = 0;; ++index) {
+      ComPtr<IDXGIAdapter1> adapter;
+      if (FAILED(dxgi_factory6->EnumAdapterByGpuPreference(
+              index, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+              IID_PPV_ARGS(&adapter)))) {
+        break;  // No more adapters
+      }
+      DXGI_ADAPTER_DESC1 desc;
+      if (FAILED(adapter->GetDesc1(&desc))) {
+        continue;
+      }
+      if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
+        continue;
+      }
+      return adapter;
+    }
+  }
+
+  // Fallback: pick the first adapter.
   ComPtr<IDXGIFactory1> dxgi_factory;
   HRESULT hr = CHECK_RESULT(CreateDXGIFactory1(IID_PPV_ARGS(&dxgi_factory)));
   ComPtr<IDXGIAdapter1> adapter;
@@ -244,7 +267,10 @@ ComPtr<IDXGIAdapter1> GetHighPerformanceAdapter() {
 // This provides direct access to AMD GPU internal metrics
 class GpuMetrics {
  public:
-  GpuMetrics() {
+  explicit GpuMetrics(const LUID& adapter_luid)
+      : adapter_luid_(adapter_luid),
+        has_target_luid_(adapter_luid.HighPart != 0 ||
+                         adapter_luid.LowPart != 0) {
     // Initialize ADLX
     ADLX_RESULT res = g_ADLX.Initialize();
     if (!ADLX_SUCCEEDED(res)) {
@@ -268,9 +294,49 @@ class GpuMetrics {
       return;
     }
 
-    // Get the first GPU
-    res = gpus->At(0, &gpu_);
-    if (!ADLX_SUCCEEDED(res) || !gpu_) {
+    // Prefer the GPU that matches our DXGI adapter LUID so metrics track the
+    // same device we render on. Fall back the first
+    // GPU if no better match is available.
+    adlx::IADLXGPUPtr matched_gpu;
+
+    for (adlx_uint i = 0; i < gpus->Size(); ++i) {
+      adlx::IADLXGPUPtr gpu;
+      res = gpus->At(i, &gpu);
+      if (!ADLX_SUCCEEDED(res) || !gpu) {
+        continue;
+      }
+
+      adlx::IADLXGPU2* gpu2 = nullptr;
+      if (ADLX_SUCCEEDED(gpu->QueryInterface(adlx::IADLXGPU2::IID(),
+                                             reinterpret_cast<void**>(&gpu2))) &&
+          gpu2) {
+        ADLX_GPU_TYPE gpu_type = GPUTYPE_UNDEFINED;
+        ADLX_LUID adlx_luid{};
+        const bool luid_read =
+            ADLX_SUCCEEDED(gpu2->LUID(&adlx_luid));
+        const bool luid_matches =
+            has_target_luid_ && luid_read &&
+            adlx_luid.lowPart ==
+                static_cast<adlx_ulong>(adapter_luid_.LowPart) &&
+            adlx_luid.highPart ==
+                static_cast<adlx_long>(adapter_luid_.HighPart);
+
+        if (luid_matches) {
+          matched_gpu = gpu;
+          gpu2->Release();
+          break;
+        }
+        gpu2->Release();
+      }
+    }
+
+    if (matched_gpu) {
+      gpu_ = matched_gpu;
+    } else {
+      res = gpus->At(0, &gpu_);
+    }
+
+    if (!gpu_) {
       printf("Warning: Failed to get GPU from ADLX\n");
       return;
     }
@@ -346,7 +412,7 @@ class GpuMetrics {
   // Check if ADLX is working
   bool IsReady() const { return ready_; }
 
-  // Get AMD driver version string
+ // Get AMD driver version string
   const char* GetDriverVersion() {
     if (!gpu_) {
       return nullptr;
@@ -368,6 +434,8 @@ class GpuMetrics {
   }
 
  private:
+  LUID adapter_luid_{};
+  bool has_target_luid_ = false;
   bool initialized_ = false;
   bool ready_ = false;
   adlx_uint total_vram_mb_ = 0;
@@ -1443,7 +1511,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
   g_gpu_name = adapter_desc.Description;
 
   // Create GPU metrics
-  static GpuMetrics gpu_metrics;
+  static GpuMetrics gpu_metrics(adapter_desc.AdapterLuid);
   g_gpu_metrics = &gpu_metrics;
   if (const char* driver_version = gpu_metrics.GetDriverVersion()) {
     g_driver_version = driver_version;
