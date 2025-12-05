@@ -1,101 +1,78 @@
-# AMD GPU Texture Memory Leak Reproduction
+# AMD VRAM Leak Reproducer
 
-This repository contains a minimal reproduction of a DXGI shared texture memory leak observed on AMD GPUs. The issue manifests when creating and destroying shared DXGI textures across separate D3D11 devices backed by the same physical GPU.
+A minimal reproduction demonstrating an unbounded memory leak leading to eventual catastrophic failure on AMD hardware.
+
+This reproduction is based on a usage pattern present today in Chromium.
+
+The leak does not occur when on NVIDIA or Intel hardware.
+
+![AMD VRAM Leak Reproducer Screenshot](screenshot.png)
+
+## Quick Start
+
+**[Download the latest release](https://github.com/MeldStudio/amd-vram-leak/releases/latest/download/amd-vram-leak-repro.exe)** - single-file executable, no installation required.
+
+### How to Reproduce the Leak
+
+1. **Start Test** - Watch VRAM usage grow unbounded as textures are created
+2. **Stop Test** - VRAM remains allocated (this is the leak!)
+3. **Flush Render Device** - Has no effect on VRAM usage
+4. **Flush Factory Device** - Immediately frees all leaked VRAM
+
+The key finding: calling `Flush()` on the factory device's context releases the leaked memory.
 
 ## The Issue
 
-When creating textures with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED` flags and sharing them between devices:
+When creating shared DXGI textures (`D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED`) and using them across D3D11 devices:
 
-1. **Factory Device**: Creates textures and returns shared NT handles
-2. **Render Device**: Opens the shared handle, renders to the texture, waits for GPU completion via fence
-3. **Disposal**: The shared handle is closed via `CloseHandle()`
+- **Expected**: GPU memory is freed when textures are released and handles are closed
+- **Actual (AMD)**: Memory is never freed, VRAM climbs continuously until exhaustion
 
-**Expected behavior**: After `CloseHandle()` is called and all references are released, the GPU memory should be freed.
+This affects applications that frequently create/destroy shared GPU resources, such as Chromium's `GpuMemoryBufferFactoryDXGI`.
 
-**Actual behavior on AMD**: The GPU memory is **never freed**. VRAM usage climbs continuously until the system runs out of GPU memory, even though:
-- The `ID3D11Texture2D` COM objects have been released
-- The shared `HANDLE` has been closed
-- The GPU has finished all operations (verified via `ID3D11Fence` wait)
+There is a Factory and a Renderer. Each has a D3D11 device backed by the same hardware adapter. The Factory D3D11 device only creates textures. The Renderer uses `OpenSharedResource1` to access the texture and render something arbitrary (a solid color). A blocking CPU side wait using an `ID3D11Fence` and a waitable event ensures the Renderer's D3D11 device is done writing to the texture.
 
-## The Workaround
+Note that the texture only exists in the `RenderToSharedTexture` scope. Once it exits this scope it will be "destroyed" and the `ID3DDestructionNotifier` callback will fire which we use to track bytes allocated and bytes freed for display in the GUI.
 
-Adding a `Flush()` call on the factory device's immediate context **after** closing the shared handle causes the memory to be properly released:
+However – the memory backing the texture we rendered to never gets freed! On an AMD Ryzen HX 370 the integrated GPU uses unified memory (shared with system RAM, 4GB dedicated to VRAM) the dedicated GPU memory gets quickly exhausted, followed by all 32GB of System RAM, followed by a unbounded page file usage until the process eventually has a catastrophic failure.
+
+A magical blue button "Flush Factory Device" simply calls `Flush()` on the Factory's D3D11 device and all of the leaked resources are quickly cleaned up 🪄
+
+
+The leak can be avoided by calling `Flush()` on the Factory's device context after we are done rendering to the buffer. Internally this is causing the drivers deferred deletions to be processed.
 
 ```cpp
 void DestroyGpuMemoryBuffer(int id, HANDLE handle) {
     CloseHandle(handle);
     
-    // THIS FIXES THE LEAK ON AMD:
+    // This fixes the leak on AMD:
     ComPtr<ID3D11DeviceContext> context;
     d3d11_device_->GetImmediateContext(&context);
     context->Flush();
 }
 ```
 
-## Running the Reproduction
-
-[A single file prebuilt executable is available here](https://github.com/MeldStudio/amd-vram-leak/releases/latest/download/amd-vram-leak-repro.exe)
-
-```
-Usage: .\amd-vram-leak-repro.exe [options]
-
-Options:
-  -help                          Show this help message and exit
-  -flush-after-handle-close      Flush D3D11 device context after closing texture handles
-```
-
-To build and run from source:
+## Building from Source
 
 ```powershell
-# Build
+# Configure and build
 .\with-devenv.ps1 cmake -B out/dev -G Ninja
 .\with-devenv.ps1 ninja -C out/dev
 
-# Run WITHOUT fix - observe VRAM climbing continuously
+# Run
 .\out\dev\repro.exe
-
-# Run WITH fix - VRAM stays stable
-.\out\dev\repro.exe -flush-after-handle-close
 ```
-
-## Observing the Leak
-
-The program displays real-time VRAM usage via AMD's ADLX SDK. You can also monitor via:
-- Task Manager → Performance → GPU → Dedicated GPU memory
-- AMD Adrenalin software
-
-Without `-flush-after-handle-close`:
-- VRAM increases by ~31.6 MB per iteration (10 × 3840×2160×4 bytes)
-- Memory is never reclaimed
-- Eventually leads to out-of-memory errors
-
-With `-flush-after-handle-close`:
-- VRAM stays relatively stable
-- Memory is properly recycled
 
 ## Technical Details
 
-- **Texture size**: 3840×2160 RGBA (approx. 31.6 MB each)
-- **Textures per iteration**: 10
-- **Sharing flags**: `D3D11_RESOURCE_MISC_SHARED_NTHANDLE | D3D11_RESOURCE_MISC_SHARED`
-- **GPU sync**: `ID3D11Fence` with CPU wait ensures GPU has completed before disposal
+| Property | Value |
+|----------|-------|
+| Texture Size | 3840×2160 RGBA (~31.6 MB) |
+| Sharing Flags | `D3D11_RESOURCE_MISC_SHARED_NTHANDLE \| D3D11_RESOURCE_MISC_SHARED` |
+| GPU Sync | `ID3D11Fence` with CPU wait |
 
-## Context
+## Tested On
 
-This pattern mirrors Chromium's `GpuMemoryBufferFactoryDXGI` which creates shared textures on one device and allows them to be used by other devices/processes. The leak causes issues in applications that frequently create and destroy shared GPU resources.
-
-## System Information
-
-Tested on:
-- AMD Radeon 890M (integrated)
-- Windows 11
-- Latest AMD drivers
-
-Confirmed to work correctly on NVIDIA GPUs.
-
-## Command Line Options
-
-```
--help                         Show help message
--flush-after-handle-close     Enable the workaround (flush after closing handles)
-```
+- AMD Radeon 890M (integrated) - **leak confirmed**
+- Windows 11 with latest AMD drivers
+- NVIDIA GPUs - **works correctly** (no leak)
