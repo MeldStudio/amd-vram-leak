@@ -30,7 +30,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(adlx fmt)
 
-add_executable(repro
+add_executable(repro WIN32
     main.cpp
     ${adlx_SOURCE_DIR}/SDK/ADLXHelper/Windows/Cpp/ADLXHelper.cpp
     ${adlx_SOURCE_DIR}/SDK/platform/Windows/WinAPIs.cpp
@@ -43,5 +43,6 @@ target_include_directories(repro PRIVATE
 target_link_libraries(repro PRIVATE
     d3d11
     dxgi
+    comctl32
     fmt::fmt
 )
