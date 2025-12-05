@@ -412,7 +412,7 @@ class GpuMetrics {
   // Check if ADLX is working
   bool IsReady() const { return ready_; }
 
- // Get AMD driver version string
+  // Get AMD driver version string
   const char* GetDriverVersion() {
     if (!gpu_) {
       return nullptr;
