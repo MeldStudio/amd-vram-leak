@@ -295,7 +295,7 @@ class GpuMetrics {
     }
 
     // Prefer the GPU that matches our DXGI adapter LUID so metrics track the
-    // same device we render on. Fall back the first
+    // same device we render on. Fall back to the first
     // GPU if no better match is available.
     adlx::IADLXGPUPtr matched_gpu;
 
@@ -310,7 +310,6 @@ class GpuMetrics {
       if (ADLX_SUCCEEDED(gpu->QueryInterface(adlx::IADLXGPU2::IID(),
                                              reinterpret_cast<void**>(&gpu2))) &&
           gpu2) {
-        ADLX_GPU_TYPE gpu_type = GPUTYPE_UNDEFINED;
         ADLX_LUID adlx_luid{};
         const bool luid_read =
             ADLX_SUCCEEDED(gpu2->LUID(&adlx_luid));
